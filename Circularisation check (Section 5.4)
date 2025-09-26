@@ -1,0 +1,39 @@
+from Bio import SeqIO
+from Bio.Seq import Seq
+from tqdm import tqdm
+import gzip
+
+# Input files (provided paths)
+forward_reads = r"path/to/WGS/sequencing/reads_1.fq.gz"
+reverse_reads = r"path/to/WGS/sequencing/reads_2.fq.gz"
+
+# Target sequence and its reverse complement
+target_sequence = "GCTGACCTTGCACACTGCATCACCGCATCTGGGATTGCAAATGGGATTGC"
+reverse_complement_sequence = str(Seq(target_sequence).reverse_complement())
+
+# Initialize counters
+total_reads = 0
+matches = 0
+
+# Function to search for the sequence and its reverse complement in reads
+def search_sequence_in_reads(file, sequence, reverse_complement):
+    global total_reads, matches
+    # Count total records for progress bar
+    with gzip.open(file, "rt") as handle:  # Open in text mode for gzip
+        total_records = sum(1 for _ in SeqIO.parse(handle, "fastq"))
+    # Reopen file and process with progress bar
+    with gzip.open(file, "rt") as handle:  # Open in text mode for gzip
+        for record in tqdm(SeqIO.parse(handle, "fastq"), total=total_records, desc=f"Processing {file}"):
+            total_reads += 1
+            read_sequence = str(record.seq)
+            if sequence in read_sequence or reverse_complement in read_sequence:
+                matches += 1
+                print(f"Match found in read {record.id}")
+
+# Search forward and reverse reads
+search_sequence_in_reads(forward_reads, target_sequence, reverse_complement_sequence)
+search_sequence_in_reads(reverse_reads, target_sequence, reverse_complement_sequence)
+
+# Output results
+print(f"Total reads: {total_reads}")
+print(f"Reads containing the sequence or its reverse complement: {matches}")
