@@ -1,0 +1,118 @@
+import os
+import glob
+from fuzzysearch import find_near_matches
+from tqdm import tqdm
+
+
+class BarcodeFinder:
+    def __init__(self, barcodes):
+        self.barcodes = {name: {"seq": seq, "rev_comp": self.complement(seq)[::-1]} for name, seq in barcodes.items()}
+        self.results = {name: {"count": 0, "matches": [], "reverse_matches": []} for name in barcodes}
+        self.total_barcode_reads = 0
+
+    def complement(self, seq):
+        complement_map = {'A': 'T', 'C': 'G', 'G': 'C', 'T': 'A'}
+        return ''.join([complement_map[base] for base in seq])
+
+    def parse_fastq(self, file_path):
+        with open(file_path, "r") as file:
+            while True:
+                name = file.readline().strip()
+                if not name:
+                    break
+                seq = file.readline().strip()
+                _ = file.readline()  # Skip the + line
+                quality = file.readline().strip()
+                yield name, seq, quality
+
+    def search_barcodes(self, file_path, output_folder):
+        # Reset results and total barcode reads for each file
+        self.results = {name: {"count": 0, "matches": [], "reverse_matches": []} for name in self.barcodes}
+        self.total_barcode_reads = 0
+
+        # Get the total number of lines in the file (every 4 lines is a single read)
+        total_lines = sum(1 for _ in open(file_path))
+        total_reads = total_lines // 4  # Since every read has 4 lines
+
+        # Get the base filename (without the folder and extension)
+        base_filename = os.path.splitext(os.path.basename(file_path))[0]
+
+        # Create the output file for binned (unmatched) reads in the specified output folder
+        binned_reads_path = os.path.join(output_folder, f"{base_filename}_binned.fastq")
+        with open(binned_reads_path, "w") as binned_file:
+            for name, read, quality in tqdm(self.parse_fastq(file_path), total=total_reads,
+                                            desc=f"Processing {os.path.basename(file_path)}"):
+                matched = False  # Flag to check if barcode matches
+
+                for barcode_name, barcode_data in self.barcodes.items():
+                    sequence = barcode_data["seq"]
+                    rev_comp_seq = barcode_data["rev_comp"]
+
+                    # Search for the barcode and its reverse complement
+                    if find_near_matches(sequence, read, max_l_dist=1):
+                        self.results[barcode_name]["count"] += 1
+                        self.results[barcode_name]["matches"].append(read)
+                        self.total_barcode_reads += 1
+                        matched = True
+                        break  # No need to check other barcodes
+
+                    elif find_near_matches(rev_comp_seq, read[::-1], max_l_dist=1):
+                        self.results[barcode_name]["count"] += 1
+                        self.results[barcode_name]["reverse_matches"].append(read)
+                        self.total_barcode_reads += 1
+                        matched = True
+                        break  # No need to check other barcodes
+
+                if not matched:
+                    # If no barcode matched, write the entire read to the binned_reads file
+                    binned_file.write(f"{name}\n{read}\n+\n{quality}\n")
+
+    def report_results(self, file_name):
+        print(f"\nResults for file: {file_name}")
+        print("Barcode Count Summary:")
+        for name, result in self.results.items():
+            if self.total_barcode_reads > 0:
+                proportion = (result['count'] / self.total_barcode_reads) * 100
+                print(f"{name} {result['count']} {proportion:.2f}%")
+            else:
+                print(f"{name} {result['count']} 0.00%")
+
+
+if __name__ == "__main__":
+    barcodes = {
+        "JCb1": "TACAATAAAGGGCAGGTGCAACCAT",
+        "JCb2": "TGACCAAGCCTGAATAGCGTCATAA",
+        "JCb3": "CGTGTATTAGAGTAATCGCATCTAG",
+        "JCb4": "TAGCGTTAGCGGCCACGGAACATCA",
+        "JCb5": "TCCTCTCGGGAGGCCAATAGAAACG",
+        "JCb6": "TACGCTTGACCCGTGTAGCTGTCAG",
+        "JCb7": "TGGTTAACACGGAACCTGAGATCCC",
+        "JCb8": "TAGCACACCTAGCGTGAACCGAGCC",
+        "JCb9": "TTACCCATTAAGAGCTCAGCGCAAC",
+        "JCb10": "TACAGGGAAGACCTACCCGATTCCC",
+        "JCb11": "TAAGTCAAGTGTCCGGTTCTCCCCG",
+        "JCb12": "TCCGTGTTGTACGACGTTAGACAA",
+        "JCb13": "TAGTCTACCTCGCATGGCTAAGCGG",
+        "JCb14": "TATCCAGTCGGCGATAAGTATGCAA",
+        "JCb15": "TCACAGGGACAGGTCATATCGTTCT",
+        "JCb16": "TGACCCCGTAGTGCCGTTAAGTATC",
+        "JCb17": "TCAATAAGCGAGCCGTAAGTTGATC",
+        "JCb18": "TCAAAGATGCCCCGACTAGGTAATA",
+        "JCb19": "TCTGCACATCCAGGCGACCGAATAT",
+        "JCb20": "TCGACGATCATCGGTGAAGCGTTTG"
+    }
+
+    # Folder where the .fastq files are located
+    folder_path = r"path\to\folder\with\FASTQ\files"  # Specify your folder path here
+    fastq_files = glob.glob(os.path.join(folder_path, "*.fastq"))  # Get all .fastq files in the folder
+
+    # Create a new folder to store binned reads
+    output_folder = os.path.join(folder_path, "binned")  # Updated to point to 'binned' folder
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    finder = BarcodeFinder(barcodes)
+
+    for file_path in fastq_files:
+        finder.search_barcodes(file_path, output_folder)
+        finder.report_results(os.path.basename(file_path))  # Report results with the filename
